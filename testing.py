@@ -56,50 +56,73 @@ def event_selection():
     confirm_btn = create_button(event_select_root,selected_event_type,event_select_drop_down)
     confirm_btn.pack(pady=5)
     event_select_root.mainloop()
+    ##Right nwo this does nothing it is all done in confirmation button, look into that I don;t think thats right
     selection = selected_event_type.get()
     if selection == "Pre-Scheduled Event":
-        pre_scheduled_root = tk.Tk()
-    
-        hour_var = tk.StringVar()
-        min_var = tk.StringVar()
+        open_start_time_picker(event_select_root)
 
-        start_label = tk.Label(pre_scheduled_root, text = "Start Time")
-        hour_label = tk.Label(pre_scheduled_root, text= "hour")
-        minute_label = tk.Label(pre_scheduled_root,text='minute')
+def confirmation_button(event_val, drop_down_event, root):
+    val = event_val.get()
+    if not val:
+        print("No selection")
+        return
 
-        start_label.pack()
-        hour_label.pack(side='left',padx=5,pady=5)
-        minute_label.pack(side='left',padx=5,pady=5)
+    drop_down_event.config(state="disabled")
 
-        hours = [f"{h:02d}" for h in range(24)]
-        hour_cb = ttk.Combobox(pre_scheduled_root, textvariable=hour_var, values=hours, width=5, state="readonly")
-        hour_cb.pack(side="left", padx=5)
+    if val == "Pre-Scheduled Event":
+        open_start_time_picker(root)
 
-        minutes = [f"{m:02d}" for m in range(60)]
-        minute_cb = ttk.Combobox(pre_scheduled_root, textvariable=min_var, values=minutes, width=5, state="readonly")
-        minute_cb.pack(side="left", padx=5)
-
-        pre_scheduled_root.mainloop()
-
-def confirmation_button(event_val:tk.StringVar,drop_down_event:ttk.Combobox):
-        """
-        function that assigns an action to a created confirmation button
-        """
-        ##retrieves value from dropdown variable
-        val = event_val.get()
-        if not val:
-            print("No selection")
-            return
-        print(f"Confirmed selection: {val}")
-        ##disables selection box
-        drop_down_event.config(state="disabled")
 
 
 def create_button(root:tk.Tk,event:tk.StringVar,menu:ttk.Combobox):
      """
      Creates a confirmation button, could mofigy so that the 'command' input takes a variety of functions
      """
-     return tk.Button(root,text="Confirm",command=lambda:confirmation_button(event,menu))
+     return tk.Button(root,text="Confirm",command=lambda:confirmation_button(event,menu,root))
+
+def open_start_time_picker(root):
+    # Only create a Toplevel window for time selection, Allows for multiple windows in one root
+    time_win = tk.Toplevel(root)
+    time_win.title("Select Start Time")
+
+    ##sets variables to be stored in
+    hour_var = tk.StringVar()
+    min_var = tk.StringVar()
+    tod_var = tk.StringVar()
+
+    tk.Label(time_win, text="Start Time").pack()
+
+    ##creates a frame that displays our new dropboxes
+    time_frame = tk.Frame(time_win)
+    time_frame.pack(pady=5)
+
+    #hour selection
+    tk.Label(time_frame, text="Hour").pack(side="top", padx=5)
+    hours = [f"{h:02d}" for h in range(1,13)]
+    hour_cb = ttk.Combobox(time_frame, textvariable=hour_var, values=hours, width=5, state="readonly")
+    hour_cb.pack(side="top", padx=5)
+
+    ##minute selection
+    tk.Label(time_frame, text="Minute").pack(side="top", padx=5)
+    minutes = [f"{m:02d}" for m in range(60)]
+    minute_cb = ttk.Combobox(time_frame, textvariable=min_var, values=minutes, width=5, state="readonly")
+    minute_cb.pack(side="top", padx=5)
+
+    ##AM or PM
+    tk.Label(time_frame,text="Time of Day").pack(side="top",padx=5)
+    tods = ['AM','PM']
+    tod_cb = ttk.Combobox(time_frame,textvariable=tod_var,values=tods,width=5,state="readonly")
+    tod_cb.pack(side="top",pady=5)
+
+    def confirm_time():
+        print(f"Confirmed time: {hour_var.get()}:{min_var.get()} {tod_var.get()}")
+        # Optionally lock the combobox
+        hour_cb.config(state="disabled")
+        minute_cb.config(state="disabled")
+        tod_cb.config(state="disabled")
+
+    tk.Button(time_win, text="Confirm", command=confirm_time).pack(pady=10)
+
 
 event_selection()
 
