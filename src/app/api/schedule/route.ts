@@ -18,7 +18,7 @@ export async function POST() {
   const scheduledTasks = scheduleTasks(tasks ?? [], lockedEvents ?? [], preferences)
 
   // Persist scheduled times
-  await Promise.all(
+  const results = await Promise.all(
     scheduledTasks.map(({ taskId, scheduledStart, scheduledEnd }) =>
       supabase
         .from('tasks')
@@ -31,5 +31,21 @@ export async function POST() {
     )
   )
 
-  return NextResponse.json({ scheduled: scheduledTasks.length })
+  const updateErrors = results.filter(r => r.error).map(r => r.error?.message)
+
+  return NextResponse.json({
+    scheduled: scheduledTasks.length,
+    debug: {
+      totalTasksFetched: tasks?.length ?? 0,
+      tasksWithoutSchedule: (tasks ?? []).filter(t => !t.completed && !t.scheduled_start).length,
+      taskIdsConsidered: (tasks ?? []).filter(t => !t.completed && !t.scheduled_start).map(t => ({ id: t.id, title: t.title, due_date: t.due_date, estimated_minutes: t.estimated_minutes, priority: t.priority })),
+      lockedEventsCount: lockedEvents?.length ?? 0,
+      preferredDays: preferences.preferred_days,
+      workHours: { start: preferences.work_start_time, end: preferences.work_end_time },
+      maxSessionMinutes: preferences.max_session_minutes,
+      breakMinutes: preferences.break_minutes,
+      scheduledTasks: scheduledTasks.map(s => ({ taskId: s.taskId, start: s.scheduledStart.toISOString(), end: s.scheduledEnd.toISOString() })),
+      updateErrors,
+    },
+  })
 }
