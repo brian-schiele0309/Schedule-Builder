@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { startOfWeek, addDays, format, isSameDay } from 'date-fns'
-import { ChevronLeft, ChevronRight, Zap } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Zap, Loader2 } from 'lucide-react'
 import type { Task, LockedEvent, Course, Preferences } from '@/types'
-import { formatTime, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { DAY_NAMES } from '@/types'
 
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 7) // 7am to 11pm
@@ -22,10 +23,22 @@ function timeToPercent(time: string, dayStart = 7): number {
 }
 
 export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Props) {
+  const router = useRouter()
   const [weekOffset, setWeekOffset] = useState(0)
+  const [scheduling, setScheduling] = useState(false)
   const today = new Date()
   const weekStart = addDays(startOfWeek(today, { weekStartsOn: 0 }), weekOffset * 7)
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+
+  async function handleAutoSchedule() {
+    setScheduling(true)
+    try {
+      await fetch('/api/schedule', { method: 'POST' })
+      router.refresh()
+    } finally {
+      setScheduling(false)
+    }
+  }
 
   return (
     <div className="bg-white rounded-2xl border shadow-sm flex flex-col flex-1 overflow-hidden">
@@ -54,9 +67,13 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
             Today
           </button>
         </div>
-        <button className="flex items-center gap-2 bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors">
-          <Zap className="w-3.5 h-3.5" />
-          Auto-schedule
+        <button
+          onClick={handleAutoSchedule}
+          disabled={scheduling}
+          className="flex items-center gap-2 bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors disabled:opacity-50"
+        >
+          {scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+          {scheduling ? 'Scheduling...' : 'Auto-schedule'}
         </button>
       </div>
 
