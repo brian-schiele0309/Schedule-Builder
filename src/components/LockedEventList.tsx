@@ -2,52 +2,97 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Pencil } from 'lucide-react'
 import type { LockedEvent } from '@/types'
 import { DAY_NAMES } from '@/types'
 import { formatTime, cn } from '@/lib/utils'
 
 const PRESET_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6']
 
+interface FormState {
+  title: string
+  days: number[]
+  startTime: string
+  endTime: string
+  color: string
+}
+
+const EMPTY_FORM: FormState = {
+  title: '',
+  days: [],
+  startTime: '09:00',
+  endTime: '10:00',
+  color: PRESET_COLORS[0],
+}
+
 export default function LockedEventList({ lockedEvents }: { lockedEvents: LockedEvent[] }) {
   const router = useRouter()
   const [showForm, setShowForm] = useState(false)
-  const [title, setTitle] = useState('')
-  const [days, setDays] = useState<number[]>([])
-  const [startTime, setStartTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('10:00')
-  const [color, setColor] = useState(PRESET_COLORS[0])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
 
   function toggleDay(day: number) {
-    setDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day])
+    setForm(f => ({
+      ...f,
+      days: f.days.includes(day) ? f.days.filter(d => d !== day) : [...f.days, day],
+    }))
   }
 
-  async function createEvent(e: React.FormEvent) {
+  function openCreateForm() {
+    setEditingId(null)
+    setForm(EMPTY_FORM)
+    setShowForm(true)
+  }
+
+  function openEditForm(event: LockedEvent) {
+    setEditingId(event.id)
+    setForm({
+      title: event.title,
+      days: [...event.days_of_week],
+      startTime: event.start_time.slice(0, 5),
+      endTime: event.end_time.slice(0, 5),
+      color: event.color,
+    })
+    setShowForm(true)
+  }
+
+  function closeForm() {
+    setShowForm(false)
+    setEditingId(null)
+    setForm(EMPTY_FORM)
+  }
+
+  async function submitForm(e: React.FormEvent) {
     e.preventDefault()
-    if (days.length === 0) return
+    if (form.days.length === 0) return
     setSaving(true)
 
-    await fetch('/api/locked-events', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title,
-        days_of_week: days,
-        start_time: startTime,
-        end_time: endTime,
-        color,
-        recurs_weekly: true,
-      }),
-    })
+    const payload = {
+      title: form.title,
+      days_of_week: form.days,
+      start_time: form.startTime,
+      end_time: form.endTime,
+      color: form.color,
+      recurs_weekly: true,
+    }
 
-    setTitle('')
-    setDays([])
-    setStartTime('09:00')
-    setEndTime('10:00')
-    setColor(PRESET_COLORS[0])
-    setShowForm(false)
+    if (editingId) {
+      await fetch(`/api/locked-events/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    } else {
+      await fetch('/api/locked-events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+
     setSaving(false)
+    closeForm()
     router.refresh()
   }
 
@@ -59,7 +104,7 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
   return (
     <div className="space-y-4 max-w-2xl">
       <button
-        onClick={() => setShowForm(s => !s)}
+        onClick={() => (showForm && !editingId ? closeForm() : openCreateForm())}
         className="flex items-center gap-2 bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
       >
         <Plus className="w-4 h-4" />
@@ -67,12 +112,12 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
       </button>
 
       {showForm && (
-        <form onSubmit={createEvent} className="bg-white rounded-xl border p-4 space-y-3">
+        <form onSubmit={submitForm} className="bg-white rounded-xl border p-4 space-y-3">
           <input
             type="text"
             placeholder="e.g. CS 201 Lecture, Work Shift"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
+            value={form.title}
+            onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             required
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
@@ -87,7 +132,7 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
                   onClick={() => toggleDay(i)}
                   className={cn(
                     'px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors',
-                    days.includes(i)
+                    form.days.includes(i)
                       ? 'bg-brand-600 text-white border-brand-600'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                   )}
@@ -103,8 +148,8 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
               <label className="text-xs text-slate-500 block mb-1">Start time</label>
               <input
                 type="time"
-                value={startTime}
-                onChange={e => setStartTime(e.target.value)}
+                value={form.startTime}
+                onChange={e => setForm(f => ({ ...f, startTime: e.target.value }))}
                 required
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
@@ -113,8 +158,8 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
               <label className="text-xs text-slate-500 block mb-1">End time</label>
               <input
                 type="time"
-                value={endTime}
-                onChange={e => setEndTime(e.target.value)}
+                value={form.endTime}
+                onChange={e => setForm(f => ({ ...f, endTime: e.target.value }))}
                 required
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
@@ -128,10 +173,10 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
                 <button
                   key={c}
                   type="button"
-                  onClick={() => setColor(c)}
+                  onClick={() => setForm(f => ({ ...f, color: c }))}
                   className={cn(
                     'w-7 h-7 rounded-full border-2 transition-transform',
-                    color === c ? 'border-slate-900 scale-110' : 'border-transparent'
+                    form.color === c ? 'border-slate-900 scale-110' : 'border-transparent'
                   )}
                   style={{ backgroundColor: c }}
                 />
@@ -139,7 +184,7 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
             </div>
           </div>
 
-          {days.length === 0 && (
+          {form.days.length === 0 && (
             <p className="text-xs text-red-500">Select at least one day</p>
           )}
 
@@ -149,11 +194,11 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
               disabled={saving}
               className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? 'Saving...' : editingId ? 'Save changes' : 'Save'}
             </button>
             <button
               type="button"
-              onClick={() => setShowForm(false)}
+              onClick={closeForm}
               className="border px-4 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50"
             >
               Cancel
@@ -172,13 +217,22 @@ export default function LockedEventList({ lockedEvents }: { lockedEvents: Locked
                 {event.days_of_week.map(d => DAY_NAMES[d]).join(', ')} · {formatTime(event.start_time)} – {formatTime(event.end_time)}
               </p>
             </div>
-            <button
-              onClick={() => deleteEvent(event.id)}
-              className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Delete"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => openEditForm(event)}
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-brand-600"
+                title="Edit"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => deleteEvent(event.id)}
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-red-500"
+                title="Delete"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         ))}
         {lockedEvents.length === 0 && (
