@@ -107,7 +107,7 @@ export function scheduleTasks(
 
   // Sort tasks: high priority first, then soonest due date
   const sortedTasks = [...tasks]
-    .filter(t => !t.completed && !t.scheduled_start)
+    .filter(t => !t.completed)
     .sort((a, b) => {
       if (b.priority !== a.priority) return b.priority - a.priority
       if (a.due_date && b.due_date) {
@@ -192,16 +192,14 @@ export function rescheduleTask(
   preferences: Preferences
 ): ScheduledTask | null {
   const taskWithoutSchedule = { ...task, scheduled_start: null, scheduled_end: null }
-  const otherScheduledTasks = allTasks.filter(
-    t => t.id !== task.id && t.scheduled_start
-  )
+  const otherTasks = allTasks.filter(t => t.id !== task.id)
 
   const result = scheduleTasks(
-    [taskWithoutSchedule],
+    [taskWithoutSchedule, ...otherTasks],
     lockedEvents,
     preferences,
     new Date()
   )
 
-  return result.length > 0 ? result[0] : null
+  return result.find(r => r.taskId === task.id) ?? null
 }
