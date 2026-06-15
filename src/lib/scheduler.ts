@@ -14,7 +14,7 @@ interface ScheduledTask {
 }
 
 // Minimum gap reserved after each scheduled session before another task can start
-const TASK_GAP_MINUTES = 30
+const TASK_GAP_MINUTES = 15
 
 // Maximum total task-minutes the scheduler will pack into a single day before spilling to the next
 const MAX_DAILY_TASK_MINUTES = 240
