@@ -22,6 +22,13 @@ function timeToPercent(time: string, dayStart = 7): number {
   return ((h + m / 60 - dayStart) / 16) * 100
 }
 
+// Clamp a block's top/height so it never renders outside the visible grid
+function clampBlock(top: number, height: number): { top: number; height: number } {
+  const bottom = Math.min(top + height, 100)
+  const clampedTop = Math.max(top, 0)
+  return { top: clampedTop, height: Math.max(bottom - clampedTop, 0) }
+}
+
 export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Props) {
   const router = useRouter()
   const [weekOffset, setWeekOffset] = useState(0)
@@ -124,15 +131,17 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
             return (
               <div
                 key={day.toISOString()}
-                className={cn('border-r last:border-r-0 relative', isSameDay(day, today) && 'bg-brand-50/30')}
+                className={cn('border-r last:border-r-0 relative overflow-hidden', isSameDay(day, today) && 'bg-brand-50/30')}
               >
                 {/* Hour grid lines */}
                 {HOURS.map(h => <div key={h} className="h-16 border-b" />)}
 
                 {/* Locked events */}
                 {dayLocked.map(event => {
-                  const top = timeToPercent(event.start_time)
-                  const height = timeToPercent(event.end_time) - top
+                  const rawTop = timeToPercent(event.start_time)
+                  const rawHeight = timeToPercent(event.end_time) - rawTop
+                  const { top, height } = clampBlock(rawTop, rawHeight)
+                  if (height <= 0) return null
                   return (
                     <div
                       key={event.id}
@@ -153,8 +162,10 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
                   if (!task.scheduled_start || !task.scheduled_end) return null
                   const startTime = format(new Date(task.scheduled_start), 'HH:mm')
                   const endTime = format(new Date(task.scheduled_end), 'HH:mm')
-                  const top = timeToPercent(startTime)
-                  const height = timeToPercent(endTime) - top
+                  const rawTop = timeToPercent(startTime)
+                  const rawHeight = timeToPercent(endTime) - rawTop
+                  const { top, height } = clampBlock(rawTop, rawHeight)
+                  if (height <= 0) return null
                   return (
                     <div
                       key={task.id}
