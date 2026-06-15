@@ -29,6 +29,41 @@ function clampBlock(top: number, height: number): { top: number; height: number 
   return { top: clampedTop, height: Math.max(bottom - clampedTop, 0) }
 }
 
+// Assign overlapping tasks to side-by-side columns so they don't visually stack
+function layoutOverlaps<T extends { top: number; height: number }>(
+  items: T[]
+): (T & { col: number; cols: number })[] {
+  const sorted = [...items].sort((a, b) => a.top - b.top)
+  const result: (T & { col: number; cols: number })[] = []
+  let cluster: (T & { col: number; cols: number })[] = []
+  let clusterEnd = -Infinity
+
+  const flushCluster = () => {
+    if (cluster.length === 0) return
+    const cols = cluster.length
+    cluster.forEach((item, i) => {
+      item.col = i
+      item.cols = cols
+    })
+    result.push(...cluster)
+    cluster = []
+  }
+
+  for (const item of sorted) {
+    const withCols = { ...item, col: 0, cols: 1 }
+    if (withCols.top >= clusterEnd) {
+      flushCluster()
+      clusterEnd = withCols.top + withCols.height
+    } else {
+      clusterEnd = Math.max(clusterEnd, withCols.top + withCols.height)
+    }
+    cluster.push(withCols)
+  }
+  flushCluster()
+
+  return result
+}
+
 export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Props) {
   const router = useRouter()
   const [weekOffset, setWeekOffset] = useState(0)
@@ -128,6 +163,21 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
               t.scheduled_start && isSameDay(new Date(t.scheduled_start), day)
             )
 
+            const taskBlocks = layoutOverlaps(
+              dayTasks
+                .map(task => {
+                  if (!task.scheduled_start || !task.scheduled_end) return null
+                  const startTime = format(new Date(task.scheduled_start), 'HH:mm')
+                  const endTime = format(new Date(task.scheduled_end), 'HH:mm')
+                  const rawTop = timeToPercent(startTime)
+                  const rawHeight = timeToPercent(endTime) - rawTop
+                  const { top, height } = clampBlock(rawTop, rawHeight)
+                  if (height <= 0) return null
+                  return { task, top, height }
+                })
+                .filter((b): b is { task: typeof dayTasks[number]; top: number; height: number } => b !== null)
+            )
+
             return (
               <div
                 key={day.toISOString()}
@@ -158,19 +208,19 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
                 })}
 
                 {/* Scheduled tasks */}
-                {dayTasks.map(task => {
-                  if (!task.scheduled_start || !task.scheduled_end) return null
-                  const startTime = format(new Date(task.scheduled_start), 'HH:mm')
-                  const endTime = format(new Date(task.scheduled_end), 'HH:mm')
-                  const rawTop = timeToPercent(startTime)
-                  const rawHeight = timeToPercent(endTime) - rawTop
-                  const { top, height } = clampBlock(rawTop, rawHeight)
-                  if (height <= 0) return null
+                {taskBlocks.map(({ task, top, height, col, cols }) => {
+                  const widthPct = 100 / cols
+                  const leftPct = col * widthPct
                   return (
                     <div
                       key={task.id}
-                      className="absolute left-0.5 right-0.5 rounded px-1.5 py-1 bg-brand-100 border border-brand-300 text-brand-800 text-xs font-medium overflow-hidden"
-                      style={{ top: `${top}%`, height: `${height}%` }}
+                      className="absolute rounded px-1.5 py-1 bg-brand-100 border border-brand-300 text-brand-800 text-xs font-medium overflow-hidden"
+                      style={{
+                        top: `${top}%`,
+                        height: `${height}%`,
+                        left: `calc(${leftPct}% + 2px)`,
+                        width: `calc(${widthPct}% - 4px)`,
+                      }}
                     >
                       {task.title}
                     </div>
