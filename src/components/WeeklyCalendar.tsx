@@ -22,6 +22,18 @@ function timeToPercent(time: string, dayStart = 7): number {
   return ((h + m / 60 - dayStart) / 16) * 100
 }
 
+// Scheduled times are stored as ISO strings whose UTC date/time-of-day represent the
+// intended wall-clock values (the scheduler computes everything in that frame). Reading
+// them via `new Date(...)` and local getters would re-interpret them in the browser's
+// timezone and shift them, so we read the UTC components directly instead.
+function isoDateString(iso: string): string {
+  return iso.slice(0, 10)
+}
+
+function isoTimeString(iso: string): string {
+  return iso.slice(11, 16)
+}
+
 // Clamp a block's top/height so it never renders outside the visible grid
 function clampBlock(top: number, height: number): { top: number; height: number } {
   const bottom = Math.min(top + height, 100)
@@ -158,17 +170,18 @@ export default function WeeklyCalendar({ tasks, lockedEvents, preferences }: Pro
           {/* Day columns */}
           {weekDays.map(day => {
             const dayOfWeek = day.getDay()
+            const dayKey = format(day, 'yyyy-MM-dd')
             const dayLocked = lockedEvents.filter(e => e.days_of_week.includes(dayOfWeek))
             const dayTasks = tasks.filter(t =>
-              t.scheduled_start && isSameDay(new Date(t.scheduled_start), day)
+              t.scheduled_start && isoDateString(t.scheduled_start) === dayKey
             )
 
             const taskBlocks = layoutOverlaps(
               dayTasks
                 .map(task => {
                   if (!task.scheduled_start || !task.scheduled_end) return null
-                  const startTime = format(new Date(task.scheduled_start), 'HH:mm')
-                  const endTime = format(new Date(task.scheduled_end), 'HH:mm')
+                  const startTime = isoTimeString(task.scheduled_start)
+                  const endTime = isoTimeString(task.scheduled_end)
                   const rawTop = timeToPercent(startTime)
                   const rawHeight = timeToPercent(endTime) - rawTop
                   const { top, height } = clampBlock(rawTop, rawHeight)
