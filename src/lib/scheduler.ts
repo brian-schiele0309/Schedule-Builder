@@ -120,6 +120,10 @@ export function scheduleTasks(
     let minutesRemaining = task.estimated_minutes
     let placed = false
 
+    // If the due date has already passed, don't let it block scheduling — fit it in ASAP instead
+    const dueDate = task.due_date ? new Date(task.due_date) : null
+    const dueDatePassed = dueDate ? isBefore(dueDate, startDate) : false
+
     // Try to place the task within the next 14 days
     for (let dayOffset = 0; dayOffset < 14 && minutesRemaining > 0; dayOffset++) {
       const day = addDays(weekStart, dayOffset)
@@ -128,8 +132,8 @@ export function scheduleTasks(
       // Respect preferred days
       if (!preferences.preferred_days.includes(dayOfWeek)) continue
 
-      // Don't schedule past due date
-      if (task.due_date && isAfter(day, new Date(task.due_date))) break
+      // Don't schedule past due date (unless it's already overdue — then schedule ASAP)
+      if (dueDate && !dueDatePassed && isAfter(day, dueDate)) break
 
       // Get locked blocks for this day
       const dayLockedBlocks = lockedEvents
