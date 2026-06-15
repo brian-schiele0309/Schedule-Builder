@@ -13,6 +13,12 @@ interface ScheduledTask {
   scheduledEnd: Date
 }
 
+// Minimum gap reserved after each scheduled session before another task can start
+const TASK_GAP_MINUTES = 30
+
+// Maximum total task-minutes the scheduler will pack into a single day before spilling to the next
+const MAX_DAILY_TASK_MINUTES = 240
+
 /**
  * Converts a locked event on a specific date into a TimeBlock.
  */
@@ -105,6 +111,9 @@ export function scheduleTasks(
   // Build a map of already-occupied slots (starts as locked events)
   const occupiedBlocks: TimeBlock[] = []
 
+  // Tracks total task-minutes already placed on each day (keyed by yyyy-MM-dd)
+  const dailyMinutesUsed: Record<string, number> = {}
+
   // Sort tasks: high priority first, then soonest due date
   const sortedTasks = [...tasks]
     .filter(t => !t.completed)
@@ -128,12 +137,16 @@ export function scheduleTasks(
     for (let dayOffset = 0; dayOffset < 14 && minutesRemaining > 0; dayOffset++) {
       const day = addDays(weekStart, dayOffset)
       const dayOfWeek = day.getDay()
+      const dayKey = format(day, 'yyyy-MM-dd')
 
       // Respect preferred days
       if (!preferences.preferred_days.includes(dayOfWeek)) continue
 
       // Don't schedule past due date (unless it's already overdue — then schedule ASAP)
       if (dueDate && !dueDatePassed && isAfter(day, dueDate)) break
+
+      // Don't overload a single day — spill remaining work to the next day
+      if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) continue
 
       // Get locked blocks for this day
       const dayLockedBlocks = lockedEvents
@@ -143,13 +156,14 @@ export function scheduleTasks(
       // Add already-scheduled task blocks for this day
       const dayOccupied = [
         ...dayLockedBlocks,
-        ...occupiedBlocks.filter(b => format(b.start, 'yyyy-MM-dd') === format(day, 'yyyy-MM-dd')),
+        ...occupiedBlocks.filter(b => format(b.start, 'yyyy-MM-dd') === dayKey),
       ]
 
       const freeBlocks = getFreeBlocks(day, dayOccupied, preferences)
 
       for (const freeBlock of freeBlocks) {
         if (minutesRemaining <= 0) break
+        if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
 
         const sessions = splitIntoSessions(
           freeBlock,
@@ -159,9 +173,13 @@ export function scheduleTasks(
 
         for (const session of sessions) {
           if (minutesRemaining <= 0) break
+          if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
 
           const sessionMinutes = (session.end.getTime() - session.start.getTime()) / 60000
-          const useMinutes = Math.min(sessionMinutes, minutesRemaining)
+          const dailyMinutesLeft = MAX_DAILY_TASK_MINUTES - (dailyMinutesUsed[dayKey] ?? 0)
+          const useMinutes = Math.min(sessionMinutes, minutesRemaining, dailyMinutesLeft)
+          if (useMinutes < 15) continue
+
           const taskEnd = new Date(session.start.getTime() + useMinutes * 60 * 1000)
 
           scheduled.push({
@@ -170,7 +188,11 @@ export function scheduleTasks(
             scheduledEnd: taskEnd,
           })
 
-          occupiedBlocks.push({ start: session.start, end: taskEnd })
+          // Reserve a gap after this session so the next task doesn't start immediately
+          const reservedEnd = new Date(taskEnd.getTime() + TASK_GAP_MINUTES * 60 * 1000)
+          occupiedBlocks.push({ start: session.start, end: reservedEnd })
+
+          dailyMinutesUsed[dayKey] = (dailyMinutesUsed[dayKey] ?? 0) + useMinutes
           minutesRemaining -= useMinutes
           placed = true
         }
