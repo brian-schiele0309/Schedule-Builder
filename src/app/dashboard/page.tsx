@@ -17,7 +17,10 @@ export default async function DashboardPage() {
       supabase.from('preferences').select('*').eq('user_id', user.id).single(),
     ])
 
-  const missedTasks = (tasks ?? []).filter(t => t.missed)
+  const now = new Date()
+  const missedTasks = (tasks ?? []).filter(
+    t => !t.completed && t.scheduled_end && new Date(t.scheduled_end) < now
+  )
 
   return (
     <div className="p-6 h-full flex flex-col gap-4">

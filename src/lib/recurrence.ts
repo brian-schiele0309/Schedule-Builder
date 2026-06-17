@@ -1,0 +1,63 @@
+import { addDays, format, startOfDay } from 'date-fns'
+import type { createClient } from '@/lib/supabase/server'
+import type { Database } from '@/types/database'
+
+const LOOKAHEAD_DAYS = 7
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
+
+/**
+ * Materializes recurrence_templates into actual task rows for the next
+ * LOOKAHEAD_DAYS, skipping any (template, day) pair that already has a task.
+ */
+export async function generateRecurringTasks(supabase: SupabaseServerClient, userId: string) {
+  const { data: templates } = await supabase
+    .from('recurrence_templates')
+    .select('*')
+    .eq('user_id', userId)
+
+  if (!templates || templates.length === 0) return
+
+  const { data: existingTasks } = await supabase
+    .from('tasks')
+    .select('recurrence_template_id, due_date')
+    .eq('user_id', userId)
+    .not('recurrence_template_id', 'is', null)
+
+  const existingKeys = new Set(
+    (existingTasks ?? [])
+      .filter(t => t.recurrence_template_id && t.due_date)
+      .map(t => `${t.recurrence_template_id}_${format(new Date(t.due_date as string), 'yyyy-MM-dd')}`)
+  )
+
+  const today = startOfDay(new Date())
+  const newTasks: Database['public']['Tables']['tasks']['Insert'][] = []
+
+  for (const template of templates) {
+    if (!template.days_of_week || template.days_of_week.length === 0) continue
+
+    for (let offset = 0; offset < LOOKAHEAD_DAYS; offset++) {
+      const day = addDays(today, offset)
+      if (!template.days_of_week.includes(day.getDay())) continue
+
+      const dayKey = format(day, 'yyyy-MM-dd')
+      const key = `${template.id}_${dayKey}`
+      if (existingKeys.has(key)) continue
+
+      newTasks.push({
+        user_id: userId,
+        course_id: template.course_id,
+        title: template.title,
+        estimated_minutes: template.estimated_minutes,
+        priority: template.priority ?? 2,
+        due_date: `${dayKey}T23:59:00`,
+        is_recurring: true,
+        recurrence_template_id: template.id,
+      })
+    }
+  }
+
+  if (newTasks.length > 0) {
+    await supabase.from('tasks').insert(newTasks)
+  }
+}
