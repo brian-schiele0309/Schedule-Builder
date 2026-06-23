@@ -31,6 +31,16 @@ function lockedEventToBlock(event: LockedEvent, date: Date): TimeBlock {
 }
 
 /**
+ * Converts an already-scheduled task into an occupied TimeBlock, including the trailing gap.
+ */
+function taskToOccupiedBlock(task: Task): TimeBlock | null {
+  if (!task.scheduled_start || !task.scheduled_end) return null
+  const start = new Date(task.scheduled_start)
+  const end = new Date(new Date(task.scheduled_end).getTime() + TASK_GAP_MINUTES * 60 * 1000)
+  return { start, end }
+}
+
+/**
  * Returns free time blocks on a given day, given locked blocks and preferences.
  */
 function getFreeBlocks(
@@ -95,6 +105,98 @@ function splitIntoSessions(block: TimeBlock, maxSessionMinutes: number, breakMin
 }
 
 /**
+ * Places a single task into the earliest available free time, mutating occupiedBlocks
+ * and dailyMinutesUsed so subsequent calls (for other tasks) see this placement as occupied.
+ */
+function placeTask(
+  task: Task,
+  occupiedBlocks: TimeBlock[],
+  dailyMinutesUsed: Record<string, number>,
+  lockedEvents: LockedEvent[],
+  preferences: Preferences,
+  startDate: Date
+): ScheduledTask[] {
+  const placements: ScheduledTask[] = []
+  const weekStart = startOfWeek(startDate, { weekStartsOn: 0 })
+  let minutesRemaining = task.estimated_minutes
+
+  // If the due date has already passed, don't let it block scheduling — fit it in ASAP instead
+  const dueDate = task.due_date ? new Date(task.due_date) : null
+  const dueDatePassed = dueDate ? isBefore(dueDate, startDate) : false
+
+  // Try to place the task within the next 14 days
+  for (let dayOffset = 0; dayOffset < 14 && minutesRemaining > 0; dayOffset++) {
+    const day = addDays(weekStart, dayOffset)
+    const dayOfWeek = day.getDay()
+    const dayKey = format(day, 'yyyy-MM-dd')
+
+    // Respect preferred days
+    if (!preferences.preferred_days.includes(dayOfWeek)) continue
+
+    // Don't schedule past due date (unless it's already overdue — then schedule ASAP)
+    if (dueDate && !dueDatePassed && isAfter(day, dueDate)) break
+
+    // Don't overload a single day — spill remaining work to the next day
+    if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) continue
+
+    // Get locked blocks for this day
+    const dayLockedBlocks = lockedEvents
+      .filter(e => e.days_of_week.includes(dayOfWeek))
+      .map(e => lockedEventToBlock(e, day))
+
+    // Add already-occupied blocks (other scheduled tasks) for this day
+    const dayOccupied = [
+      ...dayLockedBlocks,
+      ...occupiedBlocks.filter(b => format(b.start, 'yyyy-MM-dd') === dayKey),
+    ]
+
+    const freeBlocks = getFreeBlocks(day, dayOccupied, preferences)
+
+    for (const freeBlock of freeBlocks) {
+      if (minutesRemaining <= 0) break
+      if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
+
+      const sessions = splitIntoSessions(
+        freeBlock,
+        preferences.max_session_minutes,
+        preferences.break_minutes
+      )
+
+      for (const session of sessions) {
+        if (minutesRemaining <= 0) break
+        if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
+
+        const sessionMinutes = (session.end.getTime() - session.start.getTime()) / 60000
+        const dailyMinutesLeft = MAX_DAILY_TASK_MINUTES - (dailyMinutesUsed[dayKey] ?? 0)
+        const useMinutes = Math.min(sessionMinutes, minutesRemaining, dailyMinutesLeft)
+        if (useMinutes < 15) continue
+
+        const taskEnd = new Date(session.start.getTime() + useMinutes * 60 * 1000)
+
+        placements.push({
+          taskId: task.id,
+          scheduledStart: session.start,
+          scheduledEnd: taskEnd,
+        })
+
+        // Reserve a gap after this session so the next task doesn't start immediately
+        const reservedEnd = new Date(taskEnd.getTime() + TASK_GAP_MINUTES * 60 * 1000)
+        occupiedBlocks.push({ start: session.start, end: reservedEnd })
+
+        dailyMinutesUsed[dayKey] = (dailyMinutesUsed[dayKey] ?? 0) + useMinutes
+        minutesRemaining -= useMinutes
+      }
+    }
+  }
+
+  if (placements.length === 0 && minutesRemaining > 0) {
+    console.warn(`Could not schedule task: ${task.title}`)
+  }
+
+  return placements
+}
+
+/**
  * Main scheduling function.
  * Takes unscheduled tasks, locked events, and preferences.
  * Returns tasks with scheduled start/end times.
@@ -106,9 +208,8 @@ export function scheduleTasks(
   startDate: Date = new Date()
 ): ScheduledTask[] {
   const scheduled: ScheduledTask[] = []
-  const weekStart = startOfWeek(startDate, { weekStartsOn: 0 })
 
-  // Build a map of already-occupied slots (starts as locked events)
+  // Build a map of already-occupied slots (starts empty, fills in as tasks are placed)
   const occupiedBlocks: TimeBlock[] = []
 
   // Tracks total task-minutes already placed on each day (keyed by yyyy-MM-dd)
@@ -126,90 +227,16 @@ export function scheduleTasks(
     })
 
   for (const task of sortedTasks) {
-    let minutesRemaining = task.estimated_minutes
-    let placed = false
-
-    // If the due date has already passed, don't let it block scheduling — fit it in ASAP instead
-    const dueDate = task.due_date ? new Date(task.due_date) : null
-    const dueDatePassed = dueDate ? isBefore(dueDate, startDate) : false
-
-    // Try to place the task within the next 14 days
-    for (let dayOffset = 0; dayOffset < 14 && minutesRemaining > 0; dayOffset++) {
-      const day = addDays(weekStart, dayOffset)
-      const dayOfWeek = day.getDay()
-      const dayKey = format(day, 'yyyy-MM-dd')
-
-      // Respect preferred days
-      if (!preferences.preferred_days.includes(dayOfWeek)) continue
-
-      // Don't schedule past due date (unless it's already overdue — then schedule ASAP)
-      if (dueDate && !dueDatePassed && isAfter(day, dueDate)) break
-
-      // Don't overload a single day — spill remaining work to the next day
-      if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) continue
-
-      // Get locked blocks for this day
-      const dayLockedBlocks = lockedEvents
-        .filter(e => e.days_of_week.includes(dayOfWeek))
-        .map(e => lockedEventToBlock(e, day))
-
-      // Add already-scheduled task blocks for this day
-      const dayOccupied = [
-        ...dayLockedBlocks,
-        ...occupiedBlocks.filter(b => format(b.start, 'yyyy-MM-dd') === dayKey),
-      ]
-
-      const freeBlocks = getFreeBlocks(day, dayOccupied, preferences)
-
-      for (const freeBlock of freeBlocks) {
-        if (minutesRemaining <= 0) break
-        if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
-
-        const sessions = splitIntoSessions(
-          freeBlock,
-          preferences.max_session_minutes,
-          preferences.break_minutes
-        )
-
-        for (const session of sessions) {
-          if (minutesRemaining <= 0) break
-          if ((dailyMinutesUsed[dayKey] ?? 0) >= MAX_DAILY_TASK_MINUTES) break
-
-          const sessionMinutes = (session.end.getTime() - session.start.getTime()) / 60000
-          const dailyMinutesLeft = MAX_DAILY_TASK_MINUTES - (dailyMinutesUsed[dayKey] ?? 0)
-          const useMinutes = Math.min(sessionMinutes, minutesRemaining, dailyMinutesLeft)
-          if (useMinutes < 15) continue
-
-          const taskEnd = new Date(session.start.getTime() + useMinutes * 60 * 1000)
-
-          scheduled.push({
-            taskId: task.id,
-            scheduledStart: session.start,
-            scheduledEnd: taskEnd,
-          })
-
-          // Reserve a gap after this session so the next task doesn't start immediately
-          const reservedEnd = new Date(taskEnd.getTime() + TASK_GAP_MINUTES * 60 * 1000)
-          occupiedBlocks.push({ start: session.start, end: reservedEnd })
-
-          dailyMinutesUsed[dayKey] = (dailyMinutesUsed[dayKey] ?? 0) + useMinutes
-          minutesRemaining -= useMinutes
-          placed = true
-        }
-      }
-    }
-
-    if (!placed && minutesRemaining > 0) {
-      // Task couldn't be fully scheduled — mark as partially scheduled or skip
-      console.warn(`Could not schedule task: ${task.title}`)
-    }
+    scheduled.push(...placeTask(task, occupiedBlocks, dailyMinutesUsed, lockedEvents, preferences, startDate))
   }
 
   return scheduled
 }
 
 /**
- * Reschedules a single task, treating its current slot as free.
+ * Reschedules a single task, treating its current slot as free while keeping every
+ * other already-scheduled task's existing time fixed (so the new placement can't
+ * collide with them).
  */
 export function rescheduleTask(
   task: Task,
@@ -217,15 +244,22 @@ export function rescheduleTask(
   lockedEvents: LockedEvent[],
   preferences: Preferences
 ): ScheduledTask | null {
-  const taskWithoutSchedule = { ...task, scheduled_start: null, scheduled_end: null }
-  const otherTasks = allTasks.filter(t => t.id !== task.id)
+  const otherTasks = allTasks.filter(t => t.id !== task.id && !t.completed)
 
-  const result = scheduleTasks(
-    [taskWithoutSchedule, ...otherTasks],
-    lockedEvents,
-    preferences,
-    new Date()
-  )
+  const occupiedBlocks: TimeBlock[] = []
+  const dailyMinutesUsed: Record<string, number> = {}
 
-  return result.find(r => r.taskId === task.id) ?? null
+  for (const other of otherTasks) {
+    const block = taskToOccupiedBlock(other)
+    if (!block) continue
+    occupiedBlocks.push(block)
+
+    const dayKey = format(block.start, 'yyyy-MM-dd')
+    const minutes = (new Date(other.scheduled_end as string).getTime() - new Date(other.scheduled_start as string).getTime()) / 60000
+    dailyMinutesUsed[dayKey] = (dailyMinutesUsed[dayKey] ?? 0) + minutes
+  }
+
+  const placements = placeTask(task, occupiedBlocks, dailyMinutesUsed, lockedEvents, preferences, new Date())
+
+  return placements[0] ?? null
 }
