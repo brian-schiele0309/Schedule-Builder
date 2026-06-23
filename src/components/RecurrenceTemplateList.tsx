@@ -17,7 +17,7 @@ interface FormState {
   estimatedMinutes: number
   priority: number
   courseId: string
-  daysOfWeek: number[]
+  dueDay: number | null
 }
 
 const EMPTY_FORM: FormState = {
@@ -25,7 +25,7 @@ const EMPTY_FORM: FormState = {
   estimatedMinutes: 60,
   priority: 2,
   courseId: '',
-  daysOfWeek: [],
+  dueDay: null,
 }
 
 export default function RecurrenceTemplateList({ templates, courses }: Props) {
@@ -48,7 +48,7 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
       estimatedMinutes: template.estimated_minutes,
       priority: template.priority ?? 2,
       courseId: template.course_id ?? '',
-      daysOfWeek: template.days_of_week ?? [],
+      dueDay: template.days_of_week?.[0] ?? null,
     })
     setShowForm(true)
   }
@@ -59,17 +59,9 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
     setForm(EMPTY_FORM)
   }
 
-  function toggleDay(day: number) {
-    setForm(f => ({
-      ...f,
-      daysOfWeek: f.daysOfWeek.includes(day)
-        ? f.daysOfWeek.filter(d => d !== day)
-        : [...f.daysOfWeek, day].sort((a, b) => a - b),
-    }))
-  }
-
   async function submitForm(e: React.FormEvent) {
     e.preventDefault()
+    if (form.dueDay === null) return
     setSaving(true)
 
     const payload = {
@@ -77,7 +69,7 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
       estimated_minutes: form.estimatedMinutes,
       priority: form.priority,
       course_id: form.courseId || null,
-      days_of_week: form.daysOfWeek,
+      days_of_week: [form.dueDay],
     }
 
     if (editingId) {
@@ -131,16 +123,16 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Repeats on</label>
+            <label className="text-xs text-slate-500 block mb-1">Due every week on</label>
             <div className="flex gap-1.5">
               {DAY_NAMES.map((name, idx) => (
                 <button
                   key={idx}
                   type="button"
-                  onClick={() => toggleDay(idx)}
+                  onClick={() => setForm(f => ({ ...f, dueDay: idx }))}
                   className={cn(
                     'w-9 h-9 rounded-lg text-xs font-medium border transition-colors',
-                    form.daysOfWeek.includes(idx)
+                    form.dueDay === idx
                       ? 'bg-brand-600 text-white border-brand-600'
                       : 'text-slate-500 hover:bg-slate-50'
                   )}
@@ -191,7 +183,7 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
           <div className="flex gap-2">
             <button
               type="submit"
-              disabled={saving || form.daysOfWeek.length === 0}
+              disabled={saving || form.dueDay === null}
               className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
             >
               {saving ? 'Saving...' : editingId ? 'Save changes' : 'Save recurring task'}
@@ -214,7 +206,7 @@ export default function RecurrenceTemplateList({ templates, courses }: Props) {
               <p className="text-sm font-medium text-slate-900 truncate">{template.title}</p>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs text-slate-400">
-                  {(template.days_of_week ?? []).map(d => DAY_NAMES[d]).join(', ') || 'No days set'}
+                  {template.days_of_week?.[0] !== undefined ? `Due ${DAY_NAMES[template.days_of_week[0]]}` : 'No due day set'}
                 </span>
                 <span className="text-xs text-slate-400">{formatDuration(template.estimated_minutes)}</span>
                 <span className={cn('text-xs px-1.5 py-0.5 rounded-full', PRIORITY_COLORS[(template.priority ?? 2) as 1 | 2 | 3])}>

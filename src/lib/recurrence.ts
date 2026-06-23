@@ -2,13 +2,16 @@ import { addDays, format, startOfDay } from 'date-fns'
 import type { createClient } from '@/lib/supabase/server'
 import type { Database } from '@/types/database'
 
-const LOOKAHEAD_DAYS = 7
+// How far ahead to materialize future due dates, giving the scheduler plenty of
+// lead time to place work before each recurring due day actually arrives.
+const LOOKAHEAD_DAYS = 21
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
 /**
- * Materializes recurrence_templates into actual task rows for the next
- * LOOKAHEAD_DAYS, skipping any (template, day) pair that already has a task.
+ * Materializes recurrence_templates into actual task rows for every upcoming
+ * occurrence of their due day within LOOKAHEAD_DAYS, skipping any (template, day)
+ * pair that already has a task.
  */
 export async function generateRecurringTasks(supabase: SupabaseServerClient, userId: string) {
   const { data: templates } = await supabase
@@ -36,11 +39,14 @@ export async function generateRecurringTasks(supabase: SupabaseServerClient, use
   for (const template of templates) {
     if (!template.days_of_week || template.days_of_week.length === 0) continue
 
-    for (let offset = 0; offset < LOOKAHEAD_DAYS; offset++) {
-      const day = addDays(today, offset)
-      if (!template.days_of_week.includes(day.getDay())) continue
+    // Only the first selected day is used as the recurring due day.
+    const dueDayOfWeek = template.days_of_week[0]
 
-      const dayKey = format(day, 'yyyy-MM-dd')
+    for (let offset = 0; offset < LOOKAHEAD_DAYS; offset++) {
+      const dueDay = addDays(today, offset)
+      if (dueDay.getDay() !== dueDayOfWeek) continue
+
+      const dayKey = format(dueDay, 'yyyy-MM-dd')
       const key = `${template.id}_${dayKey}`
       if (existingKeys.has(key)) continue
 
